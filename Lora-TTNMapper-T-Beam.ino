@@ -1,11 +1,43 @@
+/* To decode the binary payload, you can use the following
+   javascript decoder function. It should work with the TTN console.
+
+  function Decoder(bytes, port) {
+  // Decode an uplink message from a buffer
+  // (array) of bytes to an object of fields.
+  var decoded = {};
+  // if (port === 1) decoded.led = bytes[0];
+  decoded.lat = ((bytes[0]<<16)>>>0) + ((bytes[1]<<8)>>>0) + bytes[2];
+  decoded.lat = (decoded.lat / 16777215.0 * 180) - 90;
+  decoded.lon = ((bytes[3]<<16)>>>0) + ((bytes[4]<<8)>>>0) + bytes[5];
+  decoded.lon = (decoded.lon / 16777215.0 * 360) - 180;
+  var altValue = ((bytes[6]<<8)>>>0) + bytes[7];
+  var sign = bytes[6] & (1 << 7);
+  if(sign)
+  {
+    decoded.alt = 0xFFFF0000 | altValue;
+  }
+  else
+  {
+    decoded.alt = altValue;
+  }
+  decoded.hdop = bytes[8] / 10.0;
+  return decoded;
+  }
+
+*/
 #include <HardwareSerial.h>
 #include <TinyGPS++.h>
 #include <lmic.h>
 #include <hal/hal.h>
 #include <WiFi.h>
 
+#define PRINTDEBUG
+
 // UPDATE the config.h file in the same folder WITH YOUR TTN KEYS AND ADDR.
 #include "config.h"
+
+#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP 60 /* Time ESP32 will go to sleep (in seconds) */
 
 // T-Beam specific hardware
 #define BUILTIN_LED 21
@@ -16,18 +48,24 @@
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);
 
-char s[32]; // used to sprintf for Serial output
-
-// These callbacks are only used in over-the-air activation, so they are
-// left empty here (we cannot leave them out completely unless
-// DISABLE_JOIN is set in config.h, otherwise the linker will complain).
+#ifdef OTAA
+void os_getArtEui (u1_t* buf) {
+  memcpy_P(buf, APPEUI, 8);
+}
+void os_getDevEui (u1_t* buf) {
+  memcpy_P(buf, DEVEUI, 8);
+}
+void os_getDevKey (u1_t* buf) {
+  memcpy_P(buf, APPKEY, 16);
+}
+#endif
+#ifdef ABP
 void os_getArtEui (u1_t* buf) { }
 void os_getDevEui (u1_t* buf) { }
 void os_getDevKey (u1_t* buf) { }
+#endif
 
 static osjob_t sendjob;
-// Schedule TX every this many seconds (might become longer due to duty cycle limitations).
-const unsigned TX_INTERVAL = 30;
 
 // Pin mapping
 const lmic_pinmap lmic_pins = {
@@ -37,32 +75,41 @@ const lmic_pinmap lmic_pins = {
   .dio = {26, 33, 32},
 };
 
-unsigned long last_update = 0;
-String toLog;
-uint8_t txBuffer[9];
-uint32_t LatitudeBinary, LongitudeBinary;
-uint16_t altitudeGps;
-uint8_t hdopGps;
-
 #define PMTK_SET_NMEA_UPDATE_05HZ  "$PMTK220,2000*1C"
 #define PMTK_SET_NMEA_UPDATE_1HZ  "$PMTK220,1000*1F"
 #define PMTK_SET_NMEA_OUTPUT_RMCGGA "$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
 
+//fake u-blox  XM37-1612
+//unsigned char StandbyMode[] = {"$PMTK161,0*28\x0D\x0A"};
+//#define PMTK_SET_NMEA_STANDBY "$PMTK161,0*28\x0D\x0A"
+//unsigned char PeriodicMode[] = {"$PMTK225,1,5000,12000*1C\x0D\x0A"}; // sec Navigation and 12 sec sleep in Backup state.
+//unsigned char PeriodicModeStop[] = {"$PMTK225,0*2B\x0D\x0A"};
+
+uint8_t txBuffer[9];
+
 void build_packet()
 {
+tryagain:
   while (GPSSerial.available())
   {
     gps.encode(GPSSerial.read());
   }
-  LatitudeBinary = ((gps.location.lat() + 90) / 180.0) * 16777215;
-  LongitudeBinary = ((gps.location.lng() + 180) / 360.0) * 16777215;
-  
-  sprintf(s, "Lat: %f", gps.location.lat());
-  Serial.println(s);
-  
-  sprintf(s, "Lng: %f", gps.location.lng());
-  Serial.println(s);
-  
+  if (gps.location.lat() == 0 || gps.location.lng() == 0) {
+    //esp_sleep_enable_timer_wakeup(1 * uS_TO_S_FACTOR); //sleep 1 second
+    //esp_light_sleep_start();
+    goto tryagain;
+  }
+
+#ifdef PRINTDEBUG
+  Serial.print("LAT=");  Serial.println(gps.location.lat(), 6);
+  Serial.print("LONG="); Serial.println(gps.location.lng(), 6);
+  Serial.print("ALT=");  Serial.println(gps.altitude.meters());
+  Serial.print("HDOP=");  Serial.println(gps.hdop.value());
+#endif
+
+  uint32_t LatitudeBinary = ((gps.location.lat() + 90) / 180.0) * 16777215;
+  uint32_t LongitudeBinary = ((gps.location.lng() + 180) / 360.0) * 16777215;
+
   txBuffer[0] = ( LatitudeBinary >> 16 ) & 0xFF;
   txBuffer[1] = ( LatitudeBinary >> 8 ) & 0xFF;
   txBuffer[2] = LatitudeBinary & 0xFF;
@@ -71,22 +118,27 @@ void build_packet()
   txBuffer[4] = ( LongitudeBinary >> 8 ) & 0xFF;
   txBuffer[5] = LongitudeBinary & 0xFF;
 
-  altitudeGps = gps.altitude.meters();
+  uint16_t altitudeGps = gps.altitude.meters();
   txBuffer[6] = ( altitudeGps >> 8 ) & 0xFF;
   txBuffer[7] = altitudeGps & 0xFF;
 
-  hdopGps = gps.hdop.value()/10;
-  txBuffer[8] = hdopGps & 0xFF;
+  //uint8_t hdopGps = gps.hdop.value() / 10;
+  //txBuffer[8] = hdopGps & 0xFF;
+  txBuffer[8] = (gps.hdop.value() / 10) & 0xFF;
 
-  toLog = "";
-  for(size_t i = 0; i<sizeof(txBuffer); i++)
+#ifdef PRINTDEBUG
+  String toLog = "";
+  for (size_t i = 0; i < sizeof(txBuffer); i++)
   {
     char buffer[3];
     sprintf(buffer, "%02x", txBuffer[i]);
     toLog = toLog + String(buffer);
   }
   Serial.println(toLog);
+#endif
 }
+
+char s[32]; // used to sprintf for Serial output
 
 void onEvent (ev_t ev) {
   switch (ev) {
@@ -133,7 +185,16 @@ void onEvent (ev_t ev) {
         Serial.println(s);
       }
       // Schedule next transmission
-      os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(TX_INTERVAL), do_send);
+      //os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(TX_INTERVAL), do_send);
+
+      //Serial.println("light_sleep_enter");
+      esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+      //Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) + " Seconds");
+      //delay(100);
+      esp_light_sleep_start();
+      //Serial.println("Wake up");
+
+      do_send(&sendjob);
       break;
     case EV_LOST_TSYNC:
       Serial.println(F("EV_LOST_TSYNC"));
@@ -165,6 +226,7 @@ void do_send(osjob_t* j) {
     // Prepare upstream data transmission at the next possible time.
     build_packet();
     LMIC_setTxData2(1, txBuffer, sizeof(txBuffer), 0);
+
     Serial.println(F("Packet queued"));
     digitalWrite(BUILTIN_LED, HIGH);
   }
@@ -173,46 +235,46 @@ void do_send(osjob_t* j) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println(F("TTN Mapper"));
-  
+  Serial.println(F("Lora Tracker reboot"));
+
   //Turn off WiFi and Bluetooth
   WiFi.mode(WIFI_OFF);
   btStop();
-  
+
   GPSSerial.begin(9600, SERIAL_8N1, GPS_TX, GPS_RX);
   GPSSerial.setTimeout(2);
 
   GPSSerial.println(F(PMTK_SET_NMEA_OUTPUT_RMCGGA));
   GPSSerial.println(F(PMTK_SET_NMEA_UPDATE_1HZ));   // 1 Hz update rate
-  
+  //GPSSerial.println(F(PMTK_SET_NMEA_STANDBY));
+
   // LMIC init
   os_init();
   // Reset the MAC state. Session and pending data transfers will be discarded.
   LMIC_reset();
-  
-  LMIC_setSession (0x1, DEVADDR, NWKSKEY, APPSKEY);
-  
-  LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(1, 868300000, DR_RANGE_MAP(DR_SF12, DR_SF7B), BAND_CENTI);      // g-band
-  LMIC_setupChannel(2, 868500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(3, 867100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(4, 867300000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(5, 867500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(6, 867700000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(7, 867900000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
-  LMIC_setupChannel(8, 868800000, DR_RANGE_MAP(DR_FSK,  DR_FSK),  BAND_MILLI);      // g2-band
 
-  // Disable link check validation
-  LMIC_setLinkCheckMode(0);
+#ifdef ABP
+  uint8_t appskey[sizeof(APPSKEY)];
+  uint8_t nwkskey[sizeof(NWKSKEY)];
+  memcpy_P(appskey, APPSKEY, sizeof(APPSKEY));
+  memcpy_P(nwkskey, NWKSKEY, sizeof(NWKSKEY));
+  LMIC_setSession (0x1, DEVADDR, nwkskey, appskey);
+#endif
+
+  LMIC_setLinkCheckMode(1);
+  LMIC_setAdrMode(0);
+  // Let LMIC compensate for +/- 1% clock error
+  LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100);
 
   // TTN uses SF9 for its RX2 window.
   LMIC.dn2Dr = DR_SF9;
 
   // Set data rate and transmit power for uplink (note: txpow seems to be ignored by the library)
-  LMIC_setDrTxpow(DR_SF7,14); 
-  
-  // Start job 
+  LMIC_setDrTxpow(DR_SF11, 14);
+
+  // Start job
   do_send(&sendjob);
+
   pinMode(BUILTIN_LED, OUTPUT);
   digitalWrite(BUILTIN_LED, LOW);
 }
