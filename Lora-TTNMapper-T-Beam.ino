@@ -1,9 +1,10 @@
-#include <HardwareSerial.h>
-#include <TinyGPS++.h>
-//#include <NMEAGPS.h>
+#include <Arduino.h>
 
 #include <lmic.h>
 #include <hal/hal.h>
+#include <SPI.h>
+
+#include <TinyGPS++.h>
 #include <WiFi.h>
 
 #define PRINTDEBUG
@@ -21,7 +22,6 @@
 
 // The TinyGPS++ object
 TinyGPSPlus gps;
-HardwareSerial GPSSerial(1);
 
 #ifdef OTAA
 void os_getArtEui (u1_t* buf) {
@@ -49,6 +49,8 @@ const lmic_pinmap lmic_pins = {
   .rst = LMIC_UNUSED_PIN, // was "14,"
   .dio = {26, 33, 32},
 };
+
+
 
 //#define PMTK_SET_NMEA_UPDATE_05HZ  "$PMTK220,2000*1C"
 //#define PMTK_SET_NMEA_UPDATE_1HZ  "$PMTK220,1000*1F"
@@ -84,9 +86,9 @@ void build_packet()
 {
   //GPSSerial.println(F(PMTK_AWAKE));
   while (!gps.location.isValid() || !gps.altitude.isValid() || !gps.hdop.isValid()) {
-    while (GPSSerial.available())
+    while (Serial1.available())
     {
-      char chr = GPSSerial.read();
+      char chr = Serial1.read();
       Serial.print(chr);
       gps.encode(chr);
       //gps.encode(GPSSerial.read());
@@ -156,31 +158,31 @@ void onEvent (ev_t ev) {
       break;
     case EV_JOINED:
       Serial.println(F("EV_JOINED"));
-      {
-        u4_t netid = 0;
-        devaddr_t devaddr = 0;
-        u1_t nwkKey[16];
-        u1_t artKey[16];
-        LMIC_getSessionKeys(&netid, &devaddr, nwkKey, artKey);
-        Serial.print("netid: ");
-        Serial.println(netid, DEC);
-        Serial.print("devaddr: ");
-        Serial.println(devaddr, HEX);
-        Serial.print("artKey: ");
-        for (int i = 0; i < sizeof(artKey); ++i) {
-          Serial.print(artKey[i], HEX);
-        }
-        Serial.println("");
-        Serial.print("nwkKey: ");
-        for (int i = 0; i < sizeof(nwkKey); ++i) {
-          Serial.print(nwkKey[i], HEX);
-        }
-        Serial.println("");
-      }
+      // {
+      //   u4_t netid = 0;
+      //   devaddr_t devaddr = 0;
+      //   u1_t nwkKey[16];
+      //   u1_t artKey[16];
+      //   LMIC_getSessionKeys(&netid, &devaddr, nwkKey, artKey);
+      //   Serial.print("netid: ");
+      //   Serial.println(netid, DEC);
+      //   Serial.print("devaddr: ");
+      //   Serial.println(devaddr, HEX);
+      //   Serial.print("artKey: ");
+      //   for (int i = 0; i < sizeof(artKey); ++i) {
+      //     Serial.print(artKey[i], HEX);
+      //   }
+      //   Serial.println("");
+      //   Serial.print("nwkKey: ");
+      //   for (int i = 0; i < sizeof(nwkKey); ++i) {
+      //     Serial.print(nwkKey[i], HEX);
+      //   }
+      //   Serial.println("");
+      // }
       // Disable link check validation (automatically enabled
       // during join, but because slow data rates change max TX
       // size, we don't use it in this example.
-      LMIC_setLinkCheckMode(0);
+      //LMIC_setLinkCheckMode(0);
       break;
     case EV_RFU1:
       Serial.println(F("EV_RFU1"));
@@ -269,8 +271,8 @@ void setup() {
   pinMode(BUILTIN_LED, OUTPUT);
   digitalWrite(BUILTIN_LED, HIGH);
 
-  GPSSerial.begin(9600, SERIAL_8N1, GPS_TX, GPS_RX);
-  GPSSerial.setTimeout(2);
+  Serial1.begin(9600, SERIAL_8N1, GPS_TX, GPS_RX);
+  Serial1.setTimeout(2);
 
   //GPSSerial.println(F(PMTK_SET_NMEA_OUTPUT_RMCGGA));
 

@@ -10,20 +10,18 @@ Arduino IDE [ESP32 extension](https://github.com/espressif/arduino-esp32)
 
 [TinyGPS++](http://arduiniana.org/libraries/tinygpsplus/)
 
-[LMIC-Arduino](https://github.com/matthijskooijman/arduino-lmic) : Make sure to get the last version - *1.5.0+arduino-2* currently - because the arduino IDE library updater is getting confused by the versioning scheme of that library.
+[MCCI-LMIC-Arduino](https://github.com/mcci-catena/arduino-lmic) : edit lmic_project_config.h for your own settings
 
 ## Instructions
 
 You need to connect the [T-Beam](https://github.com/LilyGO/TTGO-T-Beam) DIO1 pin marked *Lora1* to the *pin 33* - So that the ESP32 can read that output from the Lora module.
 Optionally you can also connect the *Lora2* output to *GPIO 32*, but this is not needed here.
 
+
 You can program the T-Beam using the [Arduino ESP32](https://github.com/espressif/arduino-esp32) board 'Heltec_WIFI_LoRa_32'.
 
-On The Things Network side, the settings needed are available [here](https://www.thethingsnetwork.org/docs/applications/ttnmapper/).
-
-Let me know if more detailed instructions are needed.
-
 ## TTN Console settings
+On The Things Network side, the settings needed are available [here](https://www.thethingsnetwork.org/docs/applications/ttnmapper/).
 
 To decode the binary payload, you can use the following javascript decoder function. 
 Place code in TTN console payload formats.
