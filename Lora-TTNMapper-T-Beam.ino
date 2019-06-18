@@ -1,32 +1,7 @@
-/* To decode the binary payload, you can use the following
-   javascript decoder function. It should work with the TTN console.
-
-  function Decoder(bytes, port) {
-  // Decode an uplink message from a buffer
-  // (array) of bytes to an object of fields.
-  var decoded = {};
-  // if (port === 1) decoded.led = bytes[0];
-  decoded.lat = ((bytes[0]<<16)>>>0) + ((bytes[1]<<8)>>>0) + bytes[2];
-  decoded.lat = (decoded.lat / 16777215.0 * 180) - 90;
-  decoded.lon = ((bytes[3]<<16)>>>0) + ((bytes[4]<<8)>>>0) + bytes[5];
-  decoded.lon = (decoded.lon / 16777215.0 * 360) - 180;
-  var altValue = ((bytes[6]<<8)>>>0) + bytes[7];
-  var sign = bytes[6] & (1 << 7);
-  if(sign)
-  {
-    decoded.alt = 0xFFFF0000 | altValue;
-  }
-  else
-  {
-    decoded.alt = altValue;
-  }
-  decoded.hdop = bytes[8] / 10.0;
-  return decoded;
-  }
-
-*/
 #include <HardwareSerial.h>
 #include <TinyGPS++.h>
+//#include <NMEAGPS.h>
+
 #include <lmic.h>
 #include <hal/hal.h>
 #include <WiFi.h>
@@ -40,7 +15,7 @@
 #define TIME_TO_SLEEP 60 /* Time ESP32 will go to sleep (in seconds) */
 
 // T-Beam specific hardware
-#define BUILTIN_LED 21
+#define BUILTIN_LED 14
 #define GPS_TX 12
 #define GPS_RX 15
 
@@ -75,9 +50,23 @@ const lmic_pinmap lmic_pins = {
   .dio = {26, 33, 32},
 };
 
-#define PMTK_SET_NMEA_UPDATE_05HZ  "$PMTK220,2000*1C"
-#define PMTK_SET_NMEA_UPDATE_1HZ  "$PMTK220,1000*1F"
-#define PMTK_SET_NMEA_OUTPUT_RMCGGA "$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
+//#define PMTK_SET_NMEA_UPDATE_05HZ  "$PMTK220,2000*1C"
+//#define PMTK_SET_NMEA_UPDATE_1HZ  "$PMTK220,1000*1F"
+//#define PMTK_SET_NMEA_OUTPUT_RMCGGA "$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
+
+// turn on only the second sentence (GPRMC)
+//#define PMTK_SET_NMEA_OUTPUT_RMCONLY "$PMTK314,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29"
+// turn on ALL THE DATA
+//#define PMTK_SET_NMEA_OUTPUT_ALLDATA "$PMTK314,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
+
+
+//#define PMTK_STANDBY "$PMTK161,0*28" ///< standby command & boot successful message
+//#define PMTK_AWAKE "$PMTK010,002*2D" ///< Wake up
+
+//#define PMTK_Q_RELEASE "$PMTK605*31" ///< ask for the release and version
+
+//#define PMTK_ENABLE_SBAS "$PMTK313,1*2E"
+//#define PMTK_ENABLE_WAAS "$PMTK301,2*2E"
 
 //fake u-blox  XM37-1612
 //unsigned char StandbyMode[] = {"$PMTK161,0*28\x0D\x0A"};
@@ -85,26 +74,34 @@ const lmic_pinmap lmic_pins = {
 //unsigned char PeriodicMode[] = {"$PMTK225,1,5000,12000*1C\x0D\x0A"}; // sec Navigation and 12 sec sleep in Backup state.
 //unsigned char PeriodicModeStop[] = {"$PMTK225,0*2B\x0D\x0A"};
 
+//neo 6m sleep mode
+//  RXM-PMREQ
+//0xB5, 0x62, 0x02, 0x41, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x4D, 0x3B
+
 uint8_t txBuffer[9];
 
 void build_packet()
 {
-tryagain:
-  while (GPSSerial.available())
-  {
-    gps.encode(GPSSerial.read());
-  }
-  if (gps.location.lat() == 0 || gps.location.lng() == 0) {
-    //esp_sleep_enable_timer_wakeup(1 * uS_TO_S_FACTOR); //sleep 1 second
-    //esp_light_sleep_start();
-    goto tryagain;
+  //GPSSerial.println(F(PMTK_AWAKE));
+  while (!gps.location.isValid() || !gps.altitude.isValid() || !gps.hdop.isValid()) {
+    while (GPSSerial.available())
+    {
+      char chr = GPSSerial.read();
+      Serial.print(chr);
+      gps.encode(chr);
+      //gps.encode(GPSSerial.read());
+    }
   }
 
 #ifdef PRINTDEBUG
-  Serial.print("LAT=");  Serial.println(gps.location.lat(), 6);
-  Serial.print("LONG="); Serial.println(gps.location.lng(), 6);
-  Serial.print("ALT=");  Serial.println(gps.altitude.meters());
-  Serial.print("HDOP=");  Serial.println(gps.hdop.value());
+  Serial.print("LOC valid  = ");  Serial.println(gps.location.isValid());
+  Serial.print("ALT valid  = ");  Serial.println(gps.altitude.isValid());
+  Serial.print("HDOP valid = ");  Serial.println(gps.hdop.isValid());
+
+  Serial.print("LAT = ");  Serial.println(gps.location.lat(), 6);
+  Serial.print("LONG= "); Serial.println(gps.location.lng(), 6);
+  Serial.print("ALT = ");  Serial.println(gps.altitude.meters());
+  Serial.print("HDOP= ");  Serial.println(gps.hdop.value() / 100.0);
 #endif
 
   uint32_t LatitudeBinary = ((gps.location.lat() + 90) / 180.0) * 16777215;
@@ -122,8 +119,6 @@ tryagain:
   txBuffer[6] = ( altitudeGps >> 8 ) & 0xFF;
   txBuffer[7] = altitudeGps & 0xFF;
 
-  //uint8_t hdopGps = gps.hdop.value() / 10;
-  //txBuffer[8] = hdopGps & 0xFF;
   txBuffer[8] = (gps.hdop.value() / 10) & 0xFF;
 
 #ifdef PRINTDEBUG
@@ -134,8 +129,10 @@ tryagain:
     sprintf(buffer, "%02x", txBuffer[i]);
     toLog = toLog + String(buffer);
   }
+  Serial.print("TTN Message = ");
   Serial.println(toLog);
 #endif
+  //GPSSerial.println(F(PMTK_STANDBY));
 }
 
 char s[32]; // used to sprintf for Serial output
@@ -159,8 +156,30 @@ void onEvent (ev_t ev) {
       break;
     case EV_JOINED:
       Serial.println(F("EV_JOINED"));
+      {
+        u4_t netid = 0;
+        devaddr_t devaddr = 0;
+        u1_t nwkKey[16];
+        u1_t artKey[16];
+        LMIC_getSessionKeys(&netid, &devaddr, nwkKey, artKey);
+        Serial.print("netid: ");
+        Serial.println(netid, DEC);
+        Serial.print("devaddr: ");
+        Serial.println(devaddr, HEX);
+        Serial.print("artKey: ");
+        for (int i = 0; i < sizeof(artKey); ++i) {
+          Serial.print(artKey[i], HEX);
+        }
+        Serial.println("");
+        Serial.print("nwkKey: ");
+        for (int i = 0; i < sizeof(nwkKey); ++i) {
+          Serial.print(nwkKey[i], HEX);
+        }
+        Serial.println("");
+      }
       // Disable link check validation (automatically enabled
-      // during join, but not supported by TTN at this time).
+      // during join, but because slow data rates change max TX
+      // size, we don't use it in this example.
       LMIC_setLinkCheckMode(0);
       break;
     case EV_RFU1:
@@ -174,7 +193,7 @@ void onEvent (ev_t ev) {
       break;
     case EV_TXCOMPLETE:
       Serial.println(F("EV_TXCOMPLETE (includes waiting for RX windows)"));
-      digitalWrite(BUILTIN_LED, LOW);
+      digitalWrite(BUILTIN_LED, HIGH);
       if (LMIC.txrxFlags & TXRX_ACK) {
         Serial.println(F("Received Ack"));
       }
@@ -187,12 +206,12 @@ void onEvent (ev_t ev) {
       // Schedule next transmission
       //os_setTimedCallback(&sendjob, os_getTime() + sec2osticks(TX_INTERVAL), do_send);
 
-      //Serial.println("light_sleep_enter");
+      Serial.println("Enter light sleep");
+      Serial.flush();
       esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
       //Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) + " Seconds");
-      //delay(100);
       esp_light_sleep_start();
-      //Serial.println("Wake up");
+      Serial.println("Wake up");
 
       do_send(&sendjob);
       break;
@@ -212,6 +231,9 @@ void onEvent (ev_t ev) {
     case EV_LINK_ALIVE:
       Serial.println(F("EV_LINK_ALIVE"));
       break;
+    case EV_TXSTART:
+      Serial.println(F("EV_TXSTART"));
+      break;
     default:
       Serial.println(F("Unknown event"));
       break;
@@ -219,6 +241,7 @@ void onEvent (ev_t ev) {
 }
 
 void do_send(osjob_t* j) {
+  digitalWrite(BUILTIN_LED, LOW);
   // Check if there is not a current TX/RX job running
   if (LMIC.opmode & OP_TXRXPEND) {
     Serial.println(F("OP_TXRXPEND, not sending"));
@@ -227,11 +250,13 @@ void do_send(osjob_t* j) {
     build_packet();
     LMIC_setTxData2(1, txBuffer, sizeof(txBuffer), 0);
 
-    Serial.println(F("Packet queued"));
-    digitalWrite(BUILTIN_LED, HIGH);
+    Serial.println(F("Packet queued"));    
   }
   // Next TX is scheduled after TX_COMPLETE event.
+  digitalWrite(BUILTIN_LED, HIGH);
 }
+
+
 
 void setup() {
   Serial.begin(115200);
@@ -241,12 +266,20 @@ void setup() {
   WiFi.mode(WIFI_OFF);
   btStop();
 
+  pinMode(BUILTIN_LED, OUTPUT);
+  digitalWrite(BUILTIN_LED, HIGH);
+
   GPSSerial.begin(9600, SERIAL_8N1, GPS_TX, GPS_RX);
   GPSSerial.setTimeout(2);
 
-  GPSSerial.println(F(PMTK_SET_NMEA_OUTPUT_RMCGGA));
-  GPSSerial.println(F(PMTK_SET_NMEA_UPDATE_1HZ));   // 1 Hz update rate
-  //GPSSerial.println(F(PMTK_SET_NMEA_STANDBY));
+  //GPSSerial.println(F(PMTK_SET_NMEA_OUTPUT_RMCGGA));
+
+  //GPSSerial.println(F(PMTK_SET_NMEA_OUTPUT_ALLDATA));
+  //GPSSerial.println(F(PMTK_SET_NMEA_OUTPUT_RMCONLY));
+  //GPSSerial.println(F(PMTK_SET_NMEA_UPDATE_1HZ));   // 1 Hz update rate
+
+  //GPSSerial.println(F(PMTK_ENABLE_SBAS)); //?
+  //GPSSerial.println(F(PMTK_ENABLE_WAAS)); //?
 
   // LMIC init
   os_init();
@@ -261,22 +294,44 @@ void setup() {
   LMIC_setSession (0x1, DEVADDR, nwkskey, appskey);
 #endif
 
-  LMIC_setLinkCheckMode(1);
-  LMIC_setAdrMode(0);
+  // Set up the channels used by the Things Network, which corresponds
+  // to the defaults of most gateways. Without this, only three base
+  // channels from the LoRaWAN specification are used, which certainly
+  // works, so it is good for debugging, but can overload those
+  // frequencies, so be sure to configure the full frequency range of
+  // your network here (unless your network autoconfigures them).
+  // Setting up channels should happen after LMIC_setSession, as that
+  // configures the minimal channel set.
+  LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(1, 868300000, DR_RANGE_MAP(DR_SF12, DR_SF7B), BAND_CENTI);      // g-band
+  LMIC_setupChannel(2, 868500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(3, 867100000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(4, 867300000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(5, 867500000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(6, 867700000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(7, 867900000, DR_RANGE_MAP(DR_SF12, DR_SF7),  BAND_CENTI);      // g-band
+  LMIC_setupChannel(8, 868800000, DR_RANGE_MAP(DR_FSK,  DR_FSK),  BAND_MILLI);      // g2-band
+  // TTN defines an additional channel at 869.525Mhz using SF9 for class B
+  // devices' ping slots. LMIC does not have an easy way to define set this
+  // frequency and support for class B is spotty and untested, so this
+  // frequency is not configured here.
+
+
+  // Disable link check validation
+  LMIC_setLinkCheckMode(0);
+
+  //LMIC_setAdrMode(0);
   // Let LMIC compensate for +/- 1% clock error
-  LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100);
+  //LMIC_setClockError(MAX_CLOCK_ERROR * 1 / 100);
 
   // TTN uses SF9 for its RX2 window.
   LMIC.dn2Dr = DR_SF9;
 
   // Set data rate and transmit power for uplink (note: txpow seems to be ignored by the library)
-  LMIC_setDrTxpow(DR_SF11, 14);
+  LMIC_setDrTxpow(DR_SF7, 14);
 
   // Start job
   do_send(&sendjob);
-
-  pinMode(BUILTIN_LED, OUTPUT);
-  digitalWrite(BUILTIN_LED, LOW);
 }
 
 void loop() {
