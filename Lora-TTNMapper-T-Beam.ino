@@ -21,7 +21,7 @@
 #define GPS_RX 15
 
 // The TinyGPS++ object
-TinyGPSPlus gps;
+//TinyGPSPlus gps;
 
 #ifdef OTAA
 void os_getArtEui (u1_t* buf) {
@@ -62,8 +62,8 @@ const lmic_pinmap lmic_pins = {
 //#define PMTK_SET_NMEA_OUTPUT_ALLDATA "$PMTK314,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
 
 
-//#define PMTK_STANDBY "$PMTK161,0*28" ///< standby command & boot successful message
-//#define PMTK_AWAKE "$PMTK010,002*2D" ///< Wake up
+#define PMTK_STANDBY "$PMTK161,0*28" ///< standby command & boot successful message
+#define PMTK_AWAKE "$PMTK010,002*2D" ///< Wake up
 
 //#define PMTK_Q_RELEASE "$PMTK605*31" ///< ask for the release and version
 
@@ -84,14 +84,20 @@ uint8_t txBuffer[9];
 
 void build_packet()
 {
-  //GPSSerial.println(F(PMTK_AWAKE));
+  TinyGPSPlus gps;
+
+  Serial1.println(F(PMTK_AWAKE));
+
   while (!gps.location.isValid() || !gps.altitude.isValid() || !gps.hdop.isValid()) {
     while (Serial1.available())
     {
-      char chr = Serial1.read();
-      Serial.print(chr);
-      gps.encode(chr);
-      //gps.encode(GPSSerial.read());
+      #ifdef PRINTDEBUG
+        char chr = Serial1.read();
+        Serial.print(chr);
+        gps.encode(chr);
+      #else
+        gps.encode(GPSSerial.read());
+      #endif
     }
   }
 
@@ -134,7 +140,8 @@ void build_packet()
   Serial.print("TTN Message = ");
   Serial.println(toLog);
 #endif
-  //GPSSerial.println(F(PMTK_STANDBY));
+
+  Serial1.println(F(PMTK_STANDBY));
 }
 
 char s[32]; // used to sprintf for Serial output
