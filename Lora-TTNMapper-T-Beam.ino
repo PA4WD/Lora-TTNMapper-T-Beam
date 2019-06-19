@@ -20,9 +20,6 @@
 #define GPS_TX 12
 #define GPS_RX 15
 
-// The TinyGPS++ object
-//TinyGPSPlus gps;
-
 #ifdef OTAA
 void os_getArtEui (u1_t* buf) {
   memcpy_P(buf, APPEUI, 8);
@@ -51,34 +48,14 @@ const lmic_pinmap lmic_pins = {
 };
 
 
-
-//#define PMTK_SET_NMEA_UPDATE_05HZ  "$PMTK220,2000*1C"
-//#define PMTK_SET_NMEA_UPDATE_1HZ  "$PMTK220,1000*1F"
-//#define PMTK_SET_NMEA_OUTPUT_RMCGGA "$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
-
-// turn on only the second sentence (GPRMC)
-//#define PMTK_SET_NMEA_OUTPUT_RMCONLY "$PMTK314,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29"
-// turn on ALL THE DATA
-//#define PMTK_SET_NMEA_OUTPUT_ALLDATA "$PMTK314,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0*28"
-
-
-#define PMTK_STANDBY "$PMTK161,0*28" ///< standby command & boot successful message
-#define PMTK_AWAKE "$PMTK010,002*2D" ///< Wake up
-
-//#define PMTK_Q_RELEASE "$PMTK605*31" ///< ask for the release and version
-
-//#define PMTK_ENABLE_SBAS "$PMTK313,1*2E"
-//#define PMTK_ENABLE_WAAS "$PMTK301,2*2E"
-
 //fake u-blox  XM37-1612
-//unsigned char StandbyMode[] = {"$PMTK161,0*28\x0D\x0A"};
-//#define PMTK_SET_NMEA_STANDBY "$PMTK161,0*28\x0D\x0A"
-//unsigned char PeriodicMode[] = {"$PMTK225,1,5000,12000*1C\x0D\x0A"}; // sec Navigation and 12 sec sleep in Backup state.
+#define PMTK_STANDBY "$PMTK161,0*28\x0D\x0A" ///< standby command & boot successful message
+#define PMTK_AWAKE "$PMTK010,002*2D\x0D\x0A" ///< Wake up
+#define PMTK_Q_RELEASE "$PMTK605*31\x0D\x0A" ///< ask for the release and version
+
+#define PERIODICMODE "$PMTK225,1,5000,12000*1C\x0D\x0A" // sec Navigation and 12 sec sleep in Backup state.
 //unsigned char PeriodicModeStop[] = {"$PMTK225,0*2B\x0D\x0A"};
 
-//neo 6m sleep mode
-//  RXM-PMREQ
-//0xB5, 0x62, 0x02, 0x41, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x4D, 0x3B
 
 uint8_t txBuffer[9];
 
@@ -86,18 +63,19 @@ void build_packet()
 {
   TinyGPSPlus gps;
 
-  Serial1.println(F(PMTK_AWAKE));
+  //Serial.println("gps wakeup");
+  //Serial1.print(F(PMTK_AWAKE));
 
   while (!gps.location.isValid() || !gps.altitude.isValid() || !gps.hdop.isValid()) {
     while (Serial1.available())
     {
-      #ifdef PRINTDEBUG
-        char chr = Serial1.read();
-        Serial.print(chr);
-        gps.encode(chr);
-      #else
-        gps.encode(GPSSerial.read());
-      #endif
+#ifdef PRINTDEBUG
+      char chr = Serial1.read();
+      Serial.print(chr);
+      gps.encode(chr);
+#else
+      gps.encode(Serial1.read());
+#endif
     }
   }
 
@@ -141,7 +119,9 @@ void build_packet()
   Serial.println(toLog);
 #endif
 
-  Serial1.println(F(PMTK_STANDBY));
+  //Serial.println("gps sleep");
+  //Serial1.print(F(PMTK_STANDBY));
+  //Serial1.print(F(PERIODICMODE));
 }
 
 char s[32]; // used to sprintf for Serial output
@@ -259,7 +239,7 @@ void do_send(osjob_t* j) {
     build_packet();
     LMIC_setTxData2(1, txBuffer, sizeof(txBuffer), 0);
 
-    Serial.println(F("Packet queued"));    
+    Serial.println(F("Packet queued"));
   }
   // Next TX is scheduled after TX_COMPLETE event.
   digitalWrite(BUILTIN_LED, HIGH);
@@ -279,17 +259,7 @@ void setup() {
   digitalWrite(BUILTIN_LED, HIGH);
 
   Serial1.begin(9600, SERIAL_8N1, GPS_TX, GPS_RX);
-  Serial1.setTimeout(2);
-
-  //GPSSerial.println(F(PMTK_SET_NMEA_OUTPUT_RMCGGA));
-
-  //GPSSerial.println(F(PMTK_SET_NMEA_OUTPUT_ALLDATA));
-  //GPSSerial.println(F(PMTK_SET_NMEA_OUTPUT_RMCONLY));
-  //GPSSerial.println(F(PMTK_SET_NMEA_UPDATE_1HZ));   // 1 Hz update rate
-
-  //GPSSerial.println(F(PMTK_ENABLE_SBAS)); //?
-  //GPSSerial.println(F(PMTK_ENABLE_WAAS)); //?
-
+ 
   // LMIC init
   os_init();
   // Reset the MAC state. Session and pending data transfers will be discarded.
