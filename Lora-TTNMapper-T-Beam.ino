@@ -7,7 +7,7 @@
 #include <TinyGPS++.h>
 #include <WiFi.h>
 
-#define PRINTDEBUG
+//#define PRINTDEBUG
 
 // UPDATE the config.h file in the same folder WITH YOUR TTN KEYS AND ADDR.
 #include "config.h"
@@ -47,24 +47,21 @@ const lmic_pinmap lmic_pins = {
   .dio = {26, 33, 32},
 };
 
-
-//fake u-blox  XM37-1612
-#define PMTK_STANDBY "$PMTK161,0*28\x0D\x0A" ///< standby command & boot successful message
-#define PMTK_AWAKE "$PMTK010,002*2D\x0D\x0A" ///< Wake up
-#define PMTK_Q_RELEASE "$PMTK605*31\x0D\x0A" ///< ask for the release and version
-
-#define PERIODICMODE "$PMTK225,1,5000,12000*1C\x0D\x0A" // sec Navigation and 12 sec sleep in Backup state.
-//unsigned char PeriodicModeStop[] = {"$PMTK225,0*2B\x0D\x0A"};
-
+#define GPS_OFF "0xB5\x62\x02\x41\x08\x00\x00\x00\x00\x00\x02\x00\x00\x00\x4D\x3B"
+#define GPS_ON "\xB5\x62\x02\x41\x08\x00\x00\x00\x00\x00\x01\x00\x00\x00\x4C\x37"
+#define GPS_SETPSM "\xB5\x62\x06\x11\x02\x00\x08\x01\x22\x92" // Setup for Power Save Mode (Default Cyclic 1s)
 
 uint8_t txBuffer[9];
 
 void build_packet()
 {
   TinyGPSPlus gps;
-
-  //Serial.println("gps wakeup");
-  //Serial1.print(F(PMTK_AWAKE));
+#ifdef PRINTDEBUG
+  Serial.println("gps wakeup");
+#endif
+  Serial1.print(F(GPS_ON));
+  
+  Serial1.print(F(GPS_SETPSM));
 
   while (!gps.location.isValid() || !gps.altitude.isValid() || !gps.hdop.isValid()) {
     while (Serial1.available())
@@ -117,11 +114,10 @@ void build_packet()
   }
   Serial.print("TTN Message = ");
   Serial.println(toLog);
-#endif
 
-  //Serial.println("gps sleep");
-  //Serial1.print(F(PMTK_STANDBY));
-  //Serial1.print(F(PERIODICMODE));
+  Serial.println("gps sleep");
+#endif  
+  Serial1.print(F(GPS_OFF));
 }
 
 char s[32]; // used to sprintf for Serial output
@@ -259,6 +255,7 @@ void setup() {
   digitalWrite(BUILTIN_LED, HIGH);
 
   Serial1.begin(9600, SERIAL_8N1, GPS_TX, GPS_RX);
+  Serial1.print(F(GPS_SETPSM));
  
   // LMIC init
   os_init();
